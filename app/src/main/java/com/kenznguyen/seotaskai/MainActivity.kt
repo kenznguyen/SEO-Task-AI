@@ -24,6 +24,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -66,7 +67,7 @@ private fun MainScreen(repository: TaskRepository) {
     var page by remember { mutableStateOf("Tasks") }
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Text("SEO Task AI", style = MaterialTheme.typography.headlineMedium)
-        Text("v0.2 foundation · local-first")
+        Text("v0.3 local AI · on-device inference")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("Tasks", "Browser", "OCR").forEach { item ->
                 TextButton(onClick = { page = item }) { Text(item) }
@@ -87,8 +88,21 @@ private fun TaskScreen(repository: TaskRepository) {
     val scope = rememberCoroutineScope()
     val modelManager = remember { GgufModelManager(context.contentResolver, java.io.File(context.filesDir, "models")) }
     var engine by remember { mutableStateOf<LlamaCppEngine?>(null) }
+    var models by remember { mutableStateOf(emptyList<java.io.File>()) }
+    var selectedModelName by remember { mutableStateOf<String?>(null) }
     var modelStatus by remember { mutableStateOf("No local model loaded. Import a GGUF file to enable AI analysis.") }
+    var inferenceMetrics by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
+    val modelPreferences = remember {
+        context.getSharedPreferences("local_ai_model", android.content.Context.MODE_PRIVATE)
+    }
+
+    LaunchedEffect(Unit) {
+        models = withContext(Dispatchers.IO) { modelManager.listModels() }
+        selectedModelName = modelPreferences.getString("selected_model", null)
+            ?.takeIf { name -> models.any { it.name == name } }
+            ?: models.firstOrNull()?.name
+    }
     var title by remember { mutableStateOf("") }
     var instruction by remember { mutableStateOf("") }
     var aiType by remember { mutableStateOf<String?>(null) }
@@ -112,12 +126,16 @@ private fun TaskScreen(repository: TaskRepository) {
                     "d2387ca2dbfee2ffabce7120d3770dadca0b293052bc2f0e138fdc940d9bc7b5"
                 } else null
                 val imported = withContext(Dispatchers.IO) { modelManager.import(uri, displayName, expectedChecksum) }
+                models = withContext(Dispatchers.IO) { modelManager.listModels() }
+                selectedModelName = imported.file.name
+                modelPreferences.edit().putString("selected_model", imported.file.name).apply()
                 engine?.close()
                 val loaded = LlamaCppEngine(imported.file)
                 modelStatus = "Imported ${imported.file.name} (${imported.sizeBytes / 1_000_000} MB). Loading model…"
                 loaded.load()
                 engine = loaded
                 modelStatus = "Model ready: ${imported.file.name} · SHA-256 ${imported.sha256.take(12)}…"
+                inferenceMetrics = null
                 aiType = null
             } catch (error: Exception) {
                 modelStatus = "Model import/load failed: ${error.message ?: "unknown error"}. Rule-based fallback remains available."
@@ -132,10 +150,47 @@ private fun TaskScreen(repository: TaskRepository) {
             Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("Local AI model", style = MaterialTheme.typography.titleMedium)
                 Text(modelStatus, style = MaterialTheme.typography.bodySmall)
-                Button(onClick = { modelPicker.launch(arrayOf("application/octet-stream", "*/*")) }, enabled = !busy) {
-                    Text(if (busy) "Please wait…" else "Import GGUF model")
+                if (models.isNotEmpty()) {
+                    Text("Imported models", style = MaterialTheme.typography.labelLarge)
+                    models.forEach { model ->
+                        TextButton(
+                            onClick = {
+                                selectedModelName = model.name
+                                modelPreferences.edit().putString("selected_model", model.name).apply()
+                            },
+                            enabled = !busy
+                        ) {
+                            Text((if (selectedModelName == model.name) "● " else "○ ") + model.name)
+                        }
+                    }
+                    Button(
+                        onClick = {
+                            val selected = models.firstOrNull { it.name == selectedModelName }
+                            if (selected != null) scope.launch {
+                                busy = true
+                                modelStatus = "Loading ${selected.name}…"
+                                try {
+                                    val loaded = LlamaCppEngine(selected)
+                                    loaded.load()
+                                    engine?.close()
+                                    engine = loaded
+                                    inferenceMetrics = null
+                                    modelStatus = "Model ready: ${selected.name}"
+                                } catch (error: Exception) {
+                                    modelStatus = "Model load failed: ${error.message ?: "unknown error"}"
+                                } finally {
+                                    busy = false
+                                }
+                            }
+                        },
+                        enabled = selectedModelName != null && !busy
+                    ) { Text(if (busy) "Please wait…" else "Load selected model") }
                 }
-                Text("Models are copied to app-private storage. Qwen3-1.7B Q4_K_M is about 1.28 GB; ensure sufficient free space.", style = MaterialTheme.typography.bodySmall)
+                Button(onClick = { modelPicker.launch(arrayOf("application/octet-stream", "*/*")) }, enabled = !busy) {
+                    Text("Import GGUF model")
+                }
+                Text("Selected model is remembered after restart. Models stay in app-private storage. Qwen3-1.7B Q4_K_M is about 1.28 GB.", style = MaterialTheme.typography.bodySmall)
+                inferenceMetrics?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             }
         }
         OutlinedTextField(
@@ -162,7 +217,11 @@ private fun TaskScreen(repository: TaskRepository) {
             onClick = {
                 scope.launch {
                     busy = true
-                    val result = LocalTaskAnalyzer(engine!!).analyze(instruction)
+                    val activeEngine = engine!!
+                    val result = LocalTaskAnalyzer(activeEngine).analyze(instruction)
+                    activeEngine.lastMetrics?.let { metrics ->
+                        inferenceMetrics = "Prompt: ${metrics.promptTokens} tokens · Output: ${metrics.generatedTokens} tokens · Prefill: ${metrics.prefillMillis} ms · Decode: ${metrics.decodeMillis} ms · ${"%.2f".format(metrics.decodeTokensPerSecond)} tok/s"
+                    }
                     aiType = result.type.name
                     aiSource = result.source.name
                     aiWarning = result.warning
