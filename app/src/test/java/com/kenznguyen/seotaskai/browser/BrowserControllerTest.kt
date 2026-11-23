@@ -13,7 +13,15 @@ class BrowserControllerTest {
     }
 
     @Test
-    fun preservesHttpAndHttpsUrls() {
+    fun upgradesInilahkoranHttpToHttps() {
+        assertEquals(
+            "https://software.inilahkoran.id/",
+            controller.normalizeUrl("http://software.inilahkoran.id/")
+        )
+    }
+
+    @Test
+    fun preservesOtherExplicitHttpAndHttpsUrls() {
         assertEquals("http://example.com", controller.normalizeUrl("http://example.com"))
         assertEquals("https://example.com/path", controller.normalizeUrl("https://example.com/path"))
     }
