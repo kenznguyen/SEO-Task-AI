@@ -223,17 +223,24 @@ private fun TaskScreen(repository: TaskRepository) {
         Button(
             enabled = instruction.isNotBlank() && engine?.isReady == true && !busy,
             onClick = {
-                scope.launch {
+                val activeEngine = engine
+                val taskInstruction = instruction
+                if (activeEngine != null) scope.launch {
                     busy = true
-                    val activeEngine = engine!!
-                    val result = LocalTaskAnalyzer(activeEngine).analyze(instruction)
-                    activeEngine.lastMetrics?.let { metrics ->
-                        inferenceMetrics = "Prompt: ${metrics.promptTokens} tokens · Output: ${metrics.generatedTokens} tokens · Prefill: ${metrics.prefillMillis} ms · Decode: ${metrics.decodeMillis} ms · ${"%.2f".format(metrics.decodeTokensPerSecond)} tok/s"
+                    aiWarning = null
+                    try {
+                        val result = LocalTaskAnalyzer(activeEngine).analyze(taskInstruction)
+                        activeEngine.lastMetrics?.let { metrics ->
+                            inferenceMetrics = "Prompt: ${metrics.promptTokens} tokens · Output: ${metrics.generatedTokens} tokens · Prefill: ${metrics.prefillMillis} ms · Decode: ${metrics.decodeMillis} ms · ${"%.2f".format(metrics.decodeTokensPerSecond)} tok/s"
+                        }
+                        aiType = result.type.name
+                        aiSource = result.source.name
+                        aiWarning = result.warning
+                    } catch (error: Exception) {
+                        aiWarning = "AI analysis failed: ${error.message ?: "unknown error"}"
+                    } finally {
+                        busy = false
                     }
-                    aiType = result.type.name
-                    aiSource = result.source.name
-                    aiWarning = result.warning
-                    busy = false
                 }
             }
         ) { Text(if (busy) "Analyzing…" else "Analyze with local AI") }
