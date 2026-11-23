@@ -54,6 +54,8 @@ class LlamaCppEngine internal constructor(
     @Volatile private var nativeHandle: Long = 0L
     @Volatile var lastMetrics: NativeGenerationResult? = null
         private set
+    @Volatile var loadTimeMillis: Long? = null
+        private set
 
     init {
         require(contextTokens in MIN_CONTEXT_TOKENS..MAX_CONTEXT_TOKENS) {
@@ -71,8 +73,10 @@ class LlamaCppEngine internal constructor(
             require(modelFile.isFile && modelFile.canRead()) { "GGUF model file is missing or unreadable" }
             require(modelFile.extension.equals("gguf", ignoreCase = true)) { "Model must be a GGUF file" }
             require(modelFile.length() >= MIN_MODEL_BYTES) { "GGUF model file is unexpectedly small" }
+            val loadStarted = System.nanoTime()
             val loaded = native.load(modelFile.absolutePath, contextTokens, threads)
             check(loaded != 0L) { "llama.cpp could not load the model" }
+            loadTimeMillis = (System.nanoTime() - loadStarted) / 1_000_000L
             nativeHandle = loaded
         }
     }
