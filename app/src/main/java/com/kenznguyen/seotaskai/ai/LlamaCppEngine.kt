@@ -105,7 +105,7 @@ class LlamaCppEngine internal constructor(
 
     companion object {
         const val DEFAULT_CONTEXT_TOKENS = 2048
-        const val MAX_GENERATION_TOKENS = 256
+        const val MAX_GENERATION_TOKENS = 96
         private const val MIN_CONTEXT_TOKENS = 512
         private const val MAX_CONTEXT_TOKENS = 8192
         private const val MAX_THREADS = 8
