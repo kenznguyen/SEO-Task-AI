@@ -19,7 +19,7 @@ Run each case three times and record the median:
 | B | 2048 | 300–500 tokens | 128 tokens |
 | C | 2048 | 800–1,000 tokens | 128 tokens |
 
-The current app engine caps generation at 256 tokens and defaults to context 2048. Do not increase context until the baseline is stable.
+The current app engine caps generation at 256 tokens and defaults to context 2048. The app now remembers the selected imported model across restarts; after reopening, select it in the model list and tap **Load selected model**. Do not increase context until the baseline is stable.
 
 ## Capture Android metrics
 
@@ -44,10 +44,11 @@ adb shell top -b -n 1 | head -40
 - Model revision, filename, SHA-256 and file size
 - Context size, CPU thread count and generated output length
 - Model load time
-- Prompt prefill time and generation time
-- Generated token count and measured tokens/second (must use actual tokenizer token count, not whitespace estimates)
+- Prompt token count and generated token count from llama.cpp tokenizer/sampler
+- Prompt prefill time (prompt evaluation only) and decode time (sampling plus token evaluation)
+- Decode tokens/second = generated tokens / decode seconds; the app displays these native metrics after AI analysis
 - PSS before load, after load, and peak during inference
 - Android thermal status and battery temperature before/after each run
 - Median of three runs, plus crashes, throttling or fallback events
 
-Do not publish estimated tokens/second as measured tokens/second. The current JNI API returns generated text only, so exact generation token count and split prefill/decode timing still require native metrics instrumentation before a reliable tokens/second result can be reported.
+Do not publish estimated tokens/second as measured tokens/second. The app's JNI result now carries prompt token count, generated token count, prefill milliseconds and decode milliseconds. Cross-check the displayed values with Android logs and record all three runs. Model load duration and system PSS/thermal readings remain separate measurements.
