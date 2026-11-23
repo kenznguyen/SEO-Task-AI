@@ -111,7 +111,11 @@ private fun TaskScreen(repository: TaskRepository) {
     val plan = remember(instruction) { TaskAnalyzer().analyze(instruction) }
 
     DisposableEffect(engine) {
-        onDispose { engine?.close() }
+        // Capture the engine instance associated with this effect. Reading the
+        // mutable Compose state in onDispose can close the newly loaded engine
+        // when the previous effect is disposed after an engine state change.
+        val engineToClose = engine
+        onDispose { engineToClose?.close() }
     }
     val modelPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) scope.launch {
