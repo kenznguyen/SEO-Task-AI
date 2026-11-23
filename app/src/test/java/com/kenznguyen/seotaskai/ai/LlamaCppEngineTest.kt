@@ -40,10 +40,12 @@ class LlamaCppEngineTest {
     }
 
     @Test
-    fun rejectsInvalidContextAndThreadConfiguration() {
+    fun rejectsContextOutsideSupportedRangeAndInvalidThreadConfiguration() {
         val model = File("unused.gguf")
-        assertTrue(runCatching { LlamaCppEngine(model, FakeNativeApi(), contextTokens = 512) }.isFailure)
+        assertTrue(runCatching { LlamaCppEngine(model, FakeNativeApi(), contextTokens = 511) }.isFailure)
+        assertTrue(runCatching { LlamaCppEngine(model, FakeNativeApi(), contextTokens = 8193) }.isFailure)
         assertTrue(runCatching { LlamaCppEngine(model, FakeNativeApi(), threads = 0) }.isFailure)
+        assertTrue(runCatching { LlamaCppEngine(model, FakeNativeApi(), threads = 9) }.isFailure)
     }
 
     private class FakeNativeApi : LlamaNativeApi {
