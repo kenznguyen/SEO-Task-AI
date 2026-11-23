@@ -117,8 +117,12 @@ Java_com_kenznguyen_seotaskai_ai_NativeLlamaBindings_nativeGenerate(
             throw std::runtime_error("Prompt token count is outside supported bounds");
         }
         tokens.resize(static_cast<size_t>(token_count));
-        if (llama_decode(engine->context, llama_batch_get_one(tokens.data(), token_count)) != 0) {
-            throw std::runtime_error("Prompt evaluation failed");
+        // Decode in bounded batches: n_batch is deliberately capped at 512 for phones.
+        for (int32_t offset = 0; offset < token_count; offset += 512) {
+            const int32_t count = std::min<int32_t>(512, token_count - offset);
+            if (llama_decode(engine->context, llama_batch_get_one(tokens.data() + offset, count)) != 0) {
+                throw std::runtime_error("Prompt evaluation failed");
+            }
         }
 
         std::unique_ptr<llama_sampler, decltype(&llama_sampler_free)> sampler(
