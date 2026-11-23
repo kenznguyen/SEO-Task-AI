@@ -1,7 +1,7 @@
 package com.kenznguyen.seotaskai.ai
 
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -57,7 +57,8 @@ class LlamaCppEngineTest {
         val engine = LlamaCppEngine(model, native, contextTokens = 2048, threads = 2)
         try {
             engine.load()
-            val generation = launch { engine.generate("classify task") }
+            // Native inference blocks a worker thread; keep it off runBlocking's event loop.
+            val generation = launch(Dispatchers.Default) { engine.generate("classify task") }
             assertTrue(native.generationStarted.await(2, TimeUnit.SECONDS))
             generation.cancelAndJoin()
             assertTrue(native.cancelRequested)
@@ -75,7 +76,9 @@ class LlamaCppEngineTest {
         val engine = LlamaCppEngine(model, native, contextTokens = 2048, threads = 2)
         try {
             engine.load()
-            val generation = launch { runCatching { engine.generate("classify task") } }
+            val generation = launch(Dispatchers.Default) {
+                runCatching { engine.generate("classify task") }
+            }
             assertTrue(native.generationStarted.await(2, TimeUnit.SECONDS))
             engine.close()
             generation.join()
