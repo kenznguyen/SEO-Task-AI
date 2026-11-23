@@ -9,7 +9,7 @@
 - SHA-256: `d2387ca2dbfee2ffabce7120d3770dadca0b293052bc2f0e138fdc940d9bc7b5`
 - License shown by the model repository: Apache-2.0
 
-The model is not bundled in the APK or checked into Git. The user imports the GGUF file from a trusted source. The app stores a private copy in its internal files directory. Verify the checksum against the pinned upstream artifact before treating an import as the official Qwen3 build.
+The pinned llama.cpp revision in this branch is newer than the upstream Qwen3 support baseline (Qwen documentation states support from llama.cpp b5092), so the selected runtime generation includes Qwen3 architecture support. The model is not bundled in the APK or checked into Git. The user imports the GGUF file from a trusted source. The app stores a private copy in its internal files directory. Verify the checksum against the pinned upstream artifact before treating an import as the official Qwen3 build.
 
 ## Import and storage policy
 
