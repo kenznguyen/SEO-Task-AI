@@ -28,6 +28,7 @@ class LlamaCppEngineTest {
         try {
             engine.load()
             assertTrue(engine.isReady)
+            assertTrue((engine.loadTimeMillis ?: -1L) >= 0L)
             assertEquals("local result", engine.generate("classify task"))
             assertEquals(17, engine.lastMetrics?.promptTokens)
             assertEquals(9, engine.lastMetrics?.generatedTokens)
@@ -42,6 +43,12 @@ class LlamaCppEngineTest {
             engine.close()
             model.delete()
         }
+    }
+
+    @Test
+    fun reportsZeroDecodeRateWhenNoDecodeTimeWasMeasured() {
+        val result = NativeGenerationResult("", 4, 0, 15L, 0L)
+        assertEquals(0.0, result.decodeTokensPerSecond, 0.0)
     }
 
     @Test
