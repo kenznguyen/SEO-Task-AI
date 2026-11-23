@@ -1,7 +1,13 @@
 package com.kenznguyen.seotaskai.ai
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.InternalCoroutinesApi
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.DisposableHandle
 import java.io.File
 
 data class NativeGenerationResult(
@@ -17,6 +23,8 @@ data class NativeGenerationResult(
 
 internal interface LlamaNativeApi {
     fun load(modelPath: String, contextTokens: Int, threads: Int): Long
+    fun prepare(handle: Long)
+    fun cancel(handle: Long)
     fun generate(handle: Long, prompt: String, maxTokens: Int): NativeGenerationResult
     fun free(handle: Long)
 }
@@ -29,6 +37,9 @@ private object JniLlamaNativeApi : LlamaNativeApi {
     override fun load(modelPath: String, contextTokens: Int, threads: Int) =
         NativeLlamaBindings.nativeLoad(modelPath, contextTokens, threads)
 
+    override fun prepare(handle: Long) = NativeLlamaBindings.nativePrepare(handle)
+    override fun cancel(handle: Long) = NativeLlamaBindings.nativeCancel(handle)
+
     override fun generate(handle: Long, prompt: String, maxTokens: Int) =
         NativeLlamaBindings.nativeGenerate(handle, prompt, maxTokens)
 
@@ -37,13 +48,16 @@ private object JniLlamaNativeApi : LlamaNativeApi {
 
 private object NativeLlamaBindings {
     external fun nativeLoad(modelPath: String, contextTokens: Int, threads: Int): Long
+    @JvmStatic external fun nativePrepare(handle: Long)
+    @JvmStatic external fun nativeCancel(handle: Long)
     @JvmStatic external fun nativeGenerate(handle: Long, prompt: String, maxTokens: Int): NativeGenerationResult
     @JvmStatic external fun nativeFree(handle: Long)
 }
 
 /**
  * CPU-first llama.cpp engine. The GGUF file must be in app-private storage.
- * Native calls run on Dispatchers.IO and are serialized with close/load.
+ * Active inference is cancellable; close requests native cancellation and waits
+ * for the active JNI call to exit before freeing the model/context.
  */
 class LlamaCppEngine internal constructor(
     private val modelFile: File,
@@ -52,6 +66,8 @@ class LlamaCppEngine internal constructor(
     private val threads: Int = defaultThreadCount()
 ) : AIEngine {
     @Volatile private var nativeHandle: Long = 0L
+    private var activeGenerations: Int = 0
+
     @Volatile var lastMetrics: NativeGenerationResult? = null
         private set
     @Volatile var loadTimeMillis: Long? = null
@@ -83,29 +99,69 @@ class LlamaCppEngine internal constructor(
 
     override suspend fun generate(prompt: String): String = generateWithMetrics(prompt).text
 
+    @OptIn(InternalCoroutinesApi::class)
     suspend fun generateWithMetrics(prompt: String): NativeGenerationResult = withContext(Dispatchers.IO) {
         require(prompt.isNotBlank()) { "Prompt must not be empty" }
         require(prompt.length <= MAX_PROMPT_CHARS) { "Prompt exceeds $MAX_PROMPT_CHARS characters" }
+        val context = currentCoroutineContext()
+        context.ensureActive()
+
+        val handle: Long
+        val cancellationHandler: DisposableHandle?
         synchronized(this@LlamaCppEngine) {
-            val handle = nativeHandle
+            handle = nativeHandle
             check(handle != 0L) { "Local model is not loaded" }
-            native.generate(handle, prompt, MAX_GENERATION_TOKENS).also { lastMetrics = it }
+            native.prepare(handle)
+            activeGenerations++
+            cancellationHandler = context[Job]?.invokeOnCompletion(
+                onCancelling = true,
+                invokeImmediately = true
+            ) { cause ->
+                if (cause is CancellationException) native.cancel(handle)
+            }
+        }
+
+        try {
+            val result = try {
+                native.generate(handle, prompt, MAX_GENERATION_TOKENS)
+            } catch (error: Throwable) {
+                context.ensureActive()
+                throw error
+            }
+            context.ensureActive()
+            lastMetrics = result
+            result
+        } finally {
+            cancellationHandler?.dispose()
+            synchronized(this@LlamaCppEngine) {
+                activeGenerations--
+                (this@LlamaCppEngine as java.lang.Object).notifyAll()
+            }
         }
     }
 
     override fun close() {
         synchronized(this) {
             val handle = nativeHandle
-            if (handle != 0L) {
-                nativeHandle = 0L
-                native.free(handle)
+            if (handle == 0L) return
+            nativeHandle = 0L
+            native.cancel(handle)
+            var interrupted = false
+            while (activeGenerations > 0) {
+                try {
+                    (this as java.lang.Object).wait()
+                } catch (_: InterruptedException) {
+                    interrupted = true
+                }
             }
+            native.free(handle)
+            if (interrupted) Thread.currentThread().interrupt()
         }
     }
 
     companion object {
         const val DEFAULT_CONTEXT_TOKENS = 2048
-        const val MAX_GENERATION_TOKENS = 96
+        const val MAX_GENERATION_TOKENS = 160
         private const val MIN_CONTEXT_TOKENS = 512
         private const val MAX_CONTEXT_TOKENS = 8192
         private const val MAX_THREADS = 8

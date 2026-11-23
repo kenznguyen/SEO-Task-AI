@@ -2,9 +2,9 @@ name: Android CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, feature/v0.3-local-ai-engine, fix/v0.3-qwen3-runtime]
   pull_request:
-    branches: [main, develop]
+    branches: [main, develop, feature/v0.3-local-ai-engine]
   workflow_dispatch:
 
 permissions:
