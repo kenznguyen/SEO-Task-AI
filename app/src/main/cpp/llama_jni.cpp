@@ -8,6 +8,7 @@
 #include <mutex>
 #include <string>
 #include <vector>
+#include <chrono>
 
 #include "llama.h"
 
@@ -86,7 +87,7 @@ Java_com_kenznguyen_seotaskai_ai_NativeLlamaBindings_nativeLoad(
     }
 }
 
-extern "C" JNIEXPORT jstring JNICALL
+extern "C" JNIEXPORT jobject JNICALL
 Java_com_kenznguyen_seotaskai_ai_NativeLlamaBindings_nativeGenerate(
         JNIEnv * env, jobject, jlong handle, jstring prompt, jint max_tokens) {
     Engine * engine = fromHandle(handle);
@@ -117,6 +118,8 @@ Java_com_kenznguyen_seotaskai_ai_NativeLlamaBindings_nativeGenerate(
             throw std::runtime_error("Prompt token count is outside supported bounds");
         }
         tokens.resize(static_cast<size_t>(token_count));
+        // Measure prompt prefill independently from autoregressive generation.
+        const auto prefill_start = std::chrono::steady_clock::now();
         // Decode in bounded batches: n_batch is deliberately capped at 512 for phones.
         for (int32_t offset = 0; offset < token_count; offset += 512) {
             const int32_t count = std::min<int32_t>(512, token_count - offset);
@@ -124,6 +127,7 @@ Java_com_kenznguyen_seotaskai_ai_NativeLlamaBindings_nativeGenerate(
                 throw std::runtime_error("Prompt evaluation failed");
             }
         }
+        const auto prefill_end = std::chrono::steady_clock::now();
 
         std::unique_ptr<llama_sampler, decltype(&llama_sampler_free)> sampler(
                 llama_sampler_init_greedy(), llama_sampler_free);
@@ -132,6 +136,8 @@ Java_com_kenznguyen_seotaskai_ai_NativeLlamaBindings_nativeGenerate(
         std::string output;
         std::vector<char> piece(16 * 1024);
         const int32_t limit = std::clamp(static_cast<int32_t>(max_tokens), 1, 256);
+        int32_t generated_tokens = 0;
+        const auto decode_start = std::chrono::steady_clock::now();
         for (int32_t i = 0; i < limit; ++i) {
             const llama_token token = llama_sampler_sample(sampler.get(), engine->context, -1);
             if (llama_vocab_is_eog(vocab, token)) break;
@@ -140,13 +146,33 @@ Java_com_kenznguyen_seotaskai_ai_NativeLlamaBindings_nativeGenerate(
                     vocab, token, piece.data(), static_cast<int32_t>(piece.size()), 0, true);
             if (piece_length < 0) throw std::runtime_error("Token decoding failed");
             output.append(piece.data(), static_cast<size_t>(piece_length));
+            ++generated_tokens;
 
             llama_token next = token;
             if (llama_decode(engine->context, llama_batch_get_one(&next, 1)) != 0) {
                 throw std::runtime_error("Token evaluation failed");
             }
         }
-        return env->NewStringUTF(output.c_str());
+        const auto decode_end = std::chrono::steady_clock::now();
+        const auto prefill_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                prefill_end - prefill_start).count();
+        const auto decode_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                decode_end - decode_start).count();
+
+        jclass result_class = env->FindClass(
+                "com/kenznguyen/seotaskai/ai/NativeGenerationResult");
+        if (result_class == nullptr) throw std::runtime_error("Cannot find NativeGenerationResult");
+        jmethodID constructor = env->GetMethodID(
+                result_class, "<init>", "(Ljava/lang/String;IJJJ)V");
+        if (constructor == nullptr) throw std::runtime_error("Cannot find inference metrics constructor");
+        jstring result_text = env->NewStringUTF(output.c_str());
+        if (result_text == nullptr) throw std::runtime_error("Cannot allocate generated text");
+        jobject result = env->NewObject(result_class, constructor, result_text,
+                static_cast<jint>(token_count), static_cast<jint>(generated_tokens),
+                static_cast<jlong>(prefill_ms), static_cast<jlong>(decode_ms));
+        env->DeleteLocalRef(result_text);
+        env->DeleteLocalRef(result_class);
+        return result;
     } catch (const std::exception & error) {
         if (input != nullptr) env->ReleaseStringUTFChars(prompt, input);
         throwJava(env, error.what());
