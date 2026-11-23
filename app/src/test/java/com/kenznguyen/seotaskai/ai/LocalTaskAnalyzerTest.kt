@@ -25,6 +25,25 @@ REQUIRES_ACCOUNT_ACTION=false"""),
     }
 
     @Test
+    fun parsesStructuredOutputAfterReasoningBlockAndCodeFence() = runBlocking {
+        val analyzer = LocalTaskAnalyzer(
+            engine = FakeAIEngine("""<think>Internal reasoning that must not be parsed.</think>
+```
+TYPE=CONTENT_PREPARATION
+STEPS=Draft outline|Review factual claims
+REQUIRES_ACCOUNT_ACTION=false
+```"""),
+            fallback = { TaskPlan(TaskType.UNKNOWN, listOf("fallback"), false) }
+        )
+
+        val result = analyzer.analyze("Prepare an article")
+
+        assertEquals(TaskType.CONTENT_PREPARATION, result.type)
+        assertEquals(listOf("Draft outline", "Review factual claims"), result.steps)
+        assertEquals(AnalysisSource.AI, result.source)
+    }
+
+    @Test
     fun fallsBackWhenEngineIsUnavailable() = runBlocking {
         val analyzer = LocalTaskAnalyzer(
             engine = FakeAIEngine(failure = IllegalStateException("model not loaded")),
