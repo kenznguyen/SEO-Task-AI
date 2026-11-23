@@ -35,7 +35,7 @@ class LlamaCppEngineTest {
             assertEquals(120L, engine.lastMetrics?.prefillMillis)
             assertEquals(300L, engine.lastMetrics?.decodeMillis)
             assertEquals(30.0, engine.lastMetrics?.decodeTokensPerSecond ?: 0.0, 0.001)
-            assertEquals(96, native.lastMaxTokens)
+            assertEquals(160, native.lastMaxTokens)
             engine.close()
             assertEquals(1, native.freeCount)
             assertFalse(engine.isReady)
