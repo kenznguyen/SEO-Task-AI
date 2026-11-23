@@ -43,7 +43,9 @@ import com.kenznguyen.seotaskai.data.database.TaskEntity
 import com.kenznguyen.seotaskai.data.repository.TaskRepository
 import com.kenznguyen.seotaskai.domain.analyzer.TaskAnalyzer
 import com.kenznguyen.seotaskai.ocr.TextRecognitionEngine
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -109,7 +111,7 @@ private fun TaskScreen(repository: TaskRepository) {
                 val expectedChecksum = if (displayName == "Qwen3-1.7B-Q4_K_M.gguf") {
                     "d2387ca2dbfee2ffabce7120d3770dadca0b293052bc2f0e138fdc940d9bc7b5"
                 } else null
-                val imported = modelManager.import(uri, displayName, expectedChecksum)
+                val imported = withContext(Dispatchers.IO) { modelManager.import(uri, displayName, expectedChecksum) }
                 engine?.close()
                 val loaded = LlamaCppEngine(imported.file)
                 modelStatus = "Imported ${imported.file.name} (${imported.sizeBytes / 1_000_000} MB). Loading model…"
