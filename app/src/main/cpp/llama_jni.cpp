@@ -39,7 +39,7 @@ Engine * fromHandle(jlong handle) {
 
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_kenznguyen_seotaskai_ai_NativeLlamaBindings_nativeLoad(
-        JNIEnv * env, jclass, jstring model_path, jint context_tokens, jint threads) {
+        JNIEnv * env, jobject, jstring model_path, jint context_tokens, jint threads) {
     if (model_path == nullptr) {
         throwJava(env, "Model path is null");
         return 0;
@@ -88,7 +88,7 @@ Java_com_kenznguyen_seotaskai_ai_NativeLlamaBindings_nativeLoad(
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_kenznguyen_seotaskai_ai_NativeLlamaBindings_nativeGenerate(
-        JNIEnv * env, jclass, jlong handle, jstring prompt, jint max_tokens) {
+        JNIEnv * env, jobject, jlong handle, jstring prompt, jint max_tokens) {
     Engine * engine = fromHandle(handle);
     if (engine == nullptr || engine->model == nullptr || engine->context == nullptr || prompt == nullptr) {
         throwJava(env, "Native model is not initialized");
@@ -156,6 +156,6 @@ Java_com_kenznguyen_seotaskai_ai_NativeLlamaBindings_nativeGenerate(
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_kenznguyen_seotaskai_ai_NativeLlamaBindings_nativeFree(
-        JNIEnv *, jclass, jlong handle) {
+        JNIEnv *, jobject, jlong handle) {
     delete fromHandle(handle);
 }
