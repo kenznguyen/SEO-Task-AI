@@ -163,7 +163,7 @@ Java_com_kenznguyen_seotaskai_ai_NativeLlamaBindings_nativeGenerate(
                 "com/kenznguyen/seotaskai/ai/NativeGenerationResult");
         if (result_class == nullptr) throw std::runtime_error("Cannot find NativeGenerationResult");
         jmethodID constructor = env->GetMethodID(
-                result_class, "<init>", "(Ljava/lang/String;IJJJ)V");
+                result_class, "<init>", "(Ljava/lang/String;IIJJ)V");
         if (constructor == nullptr) throw std::runtime_error("Cannot find inference metrics constructor");
         jstring result_text = env->NewStringUTF(output.c_str());
         if (result_text == nullptr) throw std::runtime_error("Cannot allocate generated text");
