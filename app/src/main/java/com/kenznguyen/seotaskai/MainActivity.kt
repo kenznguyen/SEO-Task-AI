@@ -1,6 +1,7 @@
 package com.kenznguyen.seotaskai
 
 import android.webkit.WebView
+import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -22,6 +23,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -32,6 +34,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.kenznguyen.seotaskai.ai.GgufModelManager
+import com.kenznguyen.seotaskai.ai.LocalTaskAnalyzer
+import com.kenznguyen.seotaskai.ai.LlamaCppEngine
 import com.kenznguyen.seotaskai.browser.BrowserController
 import com.kenznguyen.seotaskai.data.database.TaskDatabase
 import com.kenznguyen.seotaskai.data.database.TaskEntity
@@ -75,13 +80,59 @@ private fun MainScreen(repository: TaskRepository) {
 
 @Composable
 private fun TaskScreen(repository: TaskRepository) {
+    val context = LocalContext.current
     val tasks by repository.observeTasks().collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
+    val modelManager = remember { GgufModelManager(context.contentResolver, java.io.File(context.filesDir, "models")) }
+    var engine by remember { mutableStateOf<LlamaCppEngine?>(null) }
+    var modelStatus by remember { mutableStateOf("No local model loaded. Import a GGUF file to enable AI analysis.") }
+    var busy by remember { mutableStateOf(false) }
     var title by remember { mutableStateOf("") }
     var instruction by remember { mutableStateOf("") }
+    var aiType by remember { mutableStateOf<String?>(null) }
+    var aiSource by remember { mutableStateOf<String?>(null) }
+    var aiWarning by remember { mutableStateOf<String?>(null) }
     val plan = remember(instruction) { TaskAnalyzer().analyze(instruction) }
 
+    DisposableEffect(engine) {
+        onDispose { engine?.close() }
+    }
+    val modelPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) scope.launch {
+            busy = true
+            modelStatus = "Importing model into private app storage…"
+            try {
+                val displayName = context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+                    ?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
+                    ?: uri.lastPathSegment?.substringAfterLast(':')
+                    ?: "imported-model.gguf"
+                val imported = modelManager.import(uri, displayName)
+                engine?.close()
+                val loaded = LlamaCppEngine(imported.file)
+                modelStatus = "Imported ${imported.file.name} (${imported.sizeBytes / 1_000_000} MB). Loading model…"
+                loaded.load()
+                engine = loaded
+                modelStatus = "Model ready: ${imported.file.name} · SHA-256 ${imported.sha256.take(12)}…"
+                aiType = null
+            } catch (error: Exception) {
+                modelStatus = "Model import/load failed: ${error.message ?: "unknown error"}. Rule-based fallback remains available."
+            } finally {
+                busy = false
+            }
+        }
+    }
+
     Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxSize()) {
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Local AI model", style = MaterialTheme.typography.titleMedium)
+                Text(modelStatus, style = MaterialTheme.typography.bodySmall)
+                Button(onClick = { modelPicker.launch(arrayOf("application/octet-stream", "*/*")) }, enabled = !busy) {
+                    Text(if (busy) "Please wait…" else "Import GGUF model")
+                }
+                Text("Models are copied to app-private storage. Qwen3-1.7B Q4_K_M is about 1.28 GB; ensure sufficient free space.", style = MaterialTheme.typography.bodySmall)
+            }
+        }
         OutlinedTextField(
             value = title, onValueChange = { title = it }, label = { Text("Task title") },
             modifier = Modifier.fillMaxWidth(), singleLine = true
@@ -90,7 +141,9 @@ private fun TaskScreen(repository: TaskRepository) {
             value = instruction, onValueChange = { instruction = it },
             label = { Text("Task instruction") }, modifier = Modifier.fillMaxWidth()
         )
-        Text("Detected type: ${plan.type}")
+        Text("Rule-based type: ${plan.type}")
+        aiType?.let { Text("AI type: $it · $aiSource") }
+        aiWarning?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         if (plan.steps.isNotEmpty()) {
             Text("Suggested workflow")
             plan.steps.forEach { Text("• $it", style = MaterialTheme.typography.bodySmall) }
@@ -100,12 +153,29 @@ private fun TaskScreen(repository: TaskRepository) {
             }
         }
         Button(
-            enabled = title.isNotBlank() && instruction.isNotBlank(),
+            enabled = instruction.isNotBlank() && engine?.isReady == true && !busy,
             onClick = {
                 scope.launch {
-                    repository.addTask(title.trim(), instruction.trim(), plan.type.name)
+                    busy = true
+                    val result = LocalTaskAnalyzer(engine!!).analyze(instruction)
+                    aiType = result.type.name
+                    aiSource = result.source.name
+                    aiWarning = result.warning
+                    busy = false
+                }
+            }
+        ) { Text(if (busy) "Analyzing…" else "Analyze with local AI") }
+        Button(
+            enabled = title.isNotBlank() && instruction.isNotBlank() && !busy,
+            onClick = {
+                scope.launch {
+                    val detectedType = aiType ?: plan.type.name
+                    repository.addTask(title.trim(), instruction.trim(), detectedType)
                     title = ""
                     instruction = ""
+                    aiType = null
+                    aiSource = null
+                    aiWarning = null
                 }
             }
         ) { Text("Save task") }
@@ -121,7 +191,6 @@ private fun TaskScreen(repository: TaskRepository) {
         }
     }
 }
-
 @Composable
 private fun TaskRow(task: TaskEntity, onComplete: () -> Unit, onDelete: () -> Unit) {
     Card(modifier = Modifier.fillMaxWidth()) {
