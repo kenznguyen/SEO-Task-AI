@@ -13,8 +13,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
@@ -145,7 +145,10 @@ private fun TaskScreen(repository: TaskRepository) {
         }
     }
 
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxSize()) {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+    ) {
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("Local AI model", style = MaterialTheme.typography.titleMedium)
@@ -245,8 +248,8 @@ private fun TaskScreen(repository: TaskRepository) {
             }
         ) { Text("Save task") }
         Text("Saved tasks (${tasks.size})", style = MaterialTheme.typography.titleMedium)
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(tasks, key = { it.id }) { task ->
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            tasks.forEach { task ->
                 TaskRow(
                     task = task,
                     onComplete = { scope.launch { repository.updateStatus(task.id, "COMPLETED") } },
