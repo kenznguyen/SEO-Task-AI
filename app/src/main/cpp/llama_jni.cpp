@@ -15,6 +15,7 @@
 namespace {
 constexpr const char * TAG = "SeoTaskAI-Llama";
 constexpr int32_t MAX_PROMPT_TOKENS = 4096;
+constexpr int32_t MAX_GENERATION_TOKENS = 256;
 
 struct Engine {
     llama_model * model = nullptr;
@@ -118,9 +119,7 @@ Java_com_kenznguyen_seotaskai_ai_NativeLlamaBindings_nativeGenerate(
             throw std::runtime_error("Prompt token count is outside supported bounds");
         }
         tokens.resize(static_cast<size_t>(token_count));
-        // Measure prompt prefill independently from autoregressive generation.
         const auto prefill_start = std::chrono::steady_clock::now();
-        // Decode in bounded batches: n_batch is deliberately capped at 512 for phones.
         for (int32_t offset = 0; offset < token_count; offset += 512) {
             const int32_t count = std::min<int32_t>(512, token_count - offset);
             if (llama_decode(engine->context, llama_batch_get_one(tokens.data() + offset, count)) != 0) {
@@ -129,13 +128,19 @@ Java_com_kenznguyen_seotaskai_ai_NativeLlamaBindings_nativeGenerate(
         }
         const auto prefill_end = std::chrono::steady_clock::now();
 
+        // Qwen3 non-thinking defaults: top-k 20, top-p 0.8, temperature 0.7.
+        llama_sampler_chain_params sampler_params = llama_sampler_chain_default_params();
         std::unique_ptr<llama_sampler, decltype(&llama_sampler_free)> sampler(
-                llama_sampler_init_greedy(), llama_sampler_free);
-        if (sampler == nullptr) throw std::runtime_error("Could not initialize sampler");
+                llama_sampler_chain_init(sampler_params), llama_sampler_free);
+        if (sampler == nullptr) throw std::runtime_error("Could not initialize sampler chain");
+        llama_sampler_chain_add(sampler.get(), llama_sampler_init_top_k(20));
+        llama_sampler_chain_add(sampler.get(), llama_sampler_init_top_p(0.8f, 1));
+        llama_sampler_chain_add(sampler.get(), llama_sampler_init_temp(0.7f));
+        llama_sampler_chain_add(sampler.get(), llama_sampler_init_dist(42));
 
         std::string output;
         std::vector<char> piece(16 * 1024);
-        const int32_t limit = std::clamp(static_cast<int32_t>(max_tokens), 1, 256);
+        const int32_t limit = std::clamp(static_cast<int32_t>(max_tokens), 1, MAX_GENERATION_TOKENS);
         int32_t generated_tokens = 0;
         const auto decode_start = std::chrono::steady_clock::now();
         for (int32_t i = 0; i < limit; ++i) {
