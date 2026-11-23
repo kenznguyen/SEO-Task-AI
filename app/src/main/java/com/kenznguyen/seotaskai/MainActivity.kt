@@ -106,7 +106,10 @@ private fun TaskScreen(repository: TaskRepository) {
                     ?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
                     ?: uri.lastPathSegment?.substringAfterLast(':')
                     ?: "imported-model.gguf"
-                val imported = modelManager.import(uri, displayName)
+                val expectedChecksum = if (displayName == "Qwen3-1.7B-Q4_K_M.gguf") {
+                    "d2387ca2dbfee2ffabce7120d3770dadca0b293052bc2f0e138fdc940d9bc7b5"
+                } else null
+                val imported = modelManager.import(uri, displayName, expectedChecksum)
                 engine?.close()
                 val loaded = LlamaCppEngine(imported.file)
                 modelStatus = "Imported ${imported.file.name} (${imported.sizeBytes / 1_000_000} MB). Loading model…"
