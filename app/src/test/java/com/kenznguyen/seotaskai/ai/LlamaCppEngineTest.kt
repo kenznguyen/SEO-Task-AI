@@ -29,6 +29,11 @@ class LlamaCppEngineTest {
             engine.load()
             assertTrue(engine.isReady)
             assertEquals("local result", engine.generate("classify task"))
+            assertEquals(17, engine.lastMetrics?.promptTokens)
+            assertEquals(9, engine.lastMetrics?.generatedTokens)
+            assertEquals(120L, engine.lastMetrics?.prefillMillis)
+            assertEquals(300L, engine.lastMetrics?.decodeMillis)
+            assertEquals(30.0, engine.lastMetrics?.decodeTokensPerSecond ?: 0.0, 0.001)
             assertEquals(256, native.lastMaxTokens)
             engine.close()
             assertEquals(1, native.freeCount)
@@ -52,9 +57,9 @@ class LlamaCppEngineTest {
         var freeCount = 0
         var lastMaxTokens = 0
         override fun load(modelPath: String, contextTokens: Int, threads: Int): Long = 42L
-        override fun generate(handle: Long, prompt: String, maxTokens: Int): String {
+        override fun generate(handle: Long, prompt: String, maxTokens: Int): NativeGenerationResult {
             lastMaxTokens = maxTokens
-            return "local result"
+            return NativeGenerationResult("local result", 17, 9, 120L, 300L)
         }
         override fun free(handle: Long) { freeCount++ }
     }
