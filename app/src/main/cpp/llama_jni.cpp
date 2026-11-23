@@ -1,6 +1,7 @@
 #include <jni.h>
 #include <android/log.h>
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
@@ -20,6 +21,7 @@ constexpr int32_t MAX_GENERATION_TOKENS = 256;
 struct Engine {
     llama_model * model = nullptr;
     llama_context * context = nullptr;
+    std::atomic<bool> cancel_requested{false};
 
     ~Engine() {
         if (context != nullptr) llama_free(context);
@@ -36,6 +38,12 @@ void throwJava(JNIEnv * env, const char * message) {
 
 Engine * fromHandle(jlong handle) {
     return reinterpret_cast<Engine *>(static_cast<intptr_t>(handle));
+}
+
+void checkCancelled(const Engine * engine) {
+    if (engine->cancel_requested.load(std::memory_order_relaxed)) {
+        throw std::runtime_error("Inference cancelled");
+    }
 }
 } // namespace
 
@@ -88,6 +96,25 @@ Java_com_kenznguyen_seotaskai_ai_NativeLlamaBindings_nativeLoad(
     }
 }
 
+extern "C" JNIEXPORT void JNICALL
+Java_com_kenznguyen_seotaskai_ai_NativeLlamaBindings_nativePrepare(
+        JNIEnv * env, jobject, jlong handle) {
+    Engine * engine = fromHandle(handle);
+    if (engine == nullptr) {
+        throwJava(env, "Native model is not initialized");
+        return;
+    }
+    engine->cancel_requested.store(false, std::memory_order_relaxed);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_kenznguyen_seotaskai_ai_NativeLlamaBindings_nativeCancel(
+        JNIEnv * env, jobject, jlong handle) {
+    Engine * engine = fromHandle(handle);
+    if (engine == nullptr) return;
+    engine->cancel_requested.store(true, std::memory_order_relaxed);
+}
+
 extern "C" JNIEXPORT jobject JNICALL
 Java_com_kenznguyen_seotaskai_ai_NativeLlamaBindings_nativeGenerate(
         JNIEnv * env, jobject, jlong handle, jstring prompt, jint max_tokens) {
@@ -101,6 +128,7 @@ Java_com_kenznguyen_seotaskai_ai_NativeLlamaBindings_nativeGenerate(
     if (input == nullptr) return nullptr;
 
     try {
+        checkCancelled(engine);
         llama_memory_clear(llama_get_memory(engine->context), true);
         const llama_vocab * vocab = llama_model_get_vocab(engine->model);
         const int32_t input_length = static_cast<int32_t>(strlen(input));
@@ -121,6 +149,7 @@ Java_com_kenznguyen_seotaskai_ai_NativeLlamaBindings_nativeGenerate(
         tokens.resize(static_cast<size_t>(token_count));
         const auto prefill_start = std::chrono::steady_clock::now();
         for (int32_t offset = 0; offset < token_count; offset += 512) {
+            checkCancelled(engine);
             const int32_t count = std::min<int32_t>(512, token_count - offset);
             if (llama_decode(engine->context, llama_batch_get_one(tokens.data() + offset, count)) != 0) {
                 throw std::runtime_error("Prompt evaluation failed");
@@ -144,6 +173,7 @@ Java_com_kenznguyen_seotaskai_ai_NativeLlamaBindings_nativeGenerate(
         int32_t generated_tokens = 0;
         const auto decode_start = std::chrono::steady_clock::now();
         for (int32_t i = 0; i < limit; ++i) {
+            checkCancelled(engine);
             const llama_token token = llama_sampler_sample(sampler.get(), engine->context, -1);
             if (llama_vocab_is_eog(vocab, token)) break;
 
@@ -158,6 +188,7 @@ Java_com_kenznguyen_seotaskai_ai_NativeLlamaBindings_nativeGenerate(
                 throw std::runtime_error("Token evaluation failed");
             }
         }
+        checkCancelled(engine);
         const auto decode_end = std::chrono::steady_clock::now();
         const auto prefill_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                 prefill_end - prefill_start).count();
