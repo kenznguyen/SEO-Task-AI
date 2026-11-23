@@ -2,6 +2,8 @@
 #include <android/log.h>
 #include <algorithm>
 #include <cstdint>
+#include <cstring>
+#include <stdexcept>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -110,7 +112,8 @@ Java_com_kenznguyen_seotaskai_ai_NativeLlamaBindings_nativeGenerate(
         if (token_count < 0) {
             throw std::runtime_error("Prompt tokenization failed");
         }
-        if (token_count == 0 || token_count > MAX_PROMPT_TOKENS) {
+        if (token_count == 0 || token_count > MAX_PROMPT_TOKENS ||
+                static_cast<uint32_t>(token_count) >= llama_n_ctx(engine->context)) {
             throw std::runtime_error("Prompt token count is outside supported bounds");
         }
         tokens.resize(static_cast<size_t>(token_count));
@@ -118,14 +121,15 @@ Java_com_kenznguyen_seotaskai_ai_NativeLlamaBindings_nativeGenerate(
             throw std::runtime_error("Prompt evaluation failed");
         }
 
-        llama_sampler * sampler = llama_sampler_init_greedy();
+        std::unique_ptr<llama_sampler, decltype(&llama_sampler_free)> sampler(
+                llama_sampler_init_greedy(), llama_sampler_free);
         if (sampler == nullptr) throw std::runtime_error("Could not initialize sampler");
 
         std::string output;
         std::vector<char> piece(16 * 1024);
         const int32_t limit = std::clamp(static_cast<int32_t>(max_tokens), 1, 256);
         for (int32_t i = 0; i < limit; ++i) {
-            const llama_token token = llama_sampler_sample(sampler, engine->context, -1);
+            const llama_token token = llama_sampler_sample(sampler.get(), engine->context, -1);
             if (llama_vocab_is_eog(vocab, token)) break;
 
             const int32_t piece_length = llama_token_to_piece(
@@ -138,7 +142,6 @@ Java_com_kenznguyen_seotaskai_ai_NativeLlamaBindings_nativeGenerate(
                 throw std::runtime_error("Token evaluation failed");
             }
         }
-        llama_sampler_free(sampler);
         return env->NewStringUTF(output.c_str());
     } catch (const std::exception & error) {
         if (input != nullptr) env->ReleaseStringUTFChars(prompt, input);
