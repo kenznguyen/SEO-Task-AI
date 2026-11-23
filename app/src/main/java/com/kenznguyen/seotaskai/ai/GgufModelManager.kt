@@ -38,7 +38,7 @@ class GgufModelManager(
         ?.sortedBy { it.name.lowercase() }
         .orEmpty()
 
-    fun import(uri: Uri, displayName: String): ImportedModel {
+    fun import(uri: Uri, displayName: String, expectedSha256: String? = null): ImportedModel {
         require(displayName.endsWith(".gguf", ignoreCase = true)) { "Select a .gguf model file" }
         if (!modelDirectory.exists()) check(modelDirectory.mkdirs()) { "Cannot create private model directory" }
         val stat = StatFs(modelDirectory.absolutePath)
@@ -77,8 +77,14 @@ class GgufModelManager(
                     GgufFileValidator.validateHeader(header, total)
                 }
             } ?: error("Cannot open selected model file")
+            val checksum = digest.digest().joinToString("") { "%02x".format(it) }
+            if (expectedSha256 != null) {
+                require(checksum.equals(expectedSha256, ignoreCase = true)) {
+                    "Model checksum does not match the trusted catalog entry"
+                }
+            }
             check(temporary.renameTo(destination)) { "Cannot finalize imported model" }
-            return ImportedModel(destination, total, digest.digest().joinToString("") { "%02x".format(it) })
+            return ImportedModel(destination, total, checksum)
         } catch (error: Exception) {
             temporary.delete()
             throw error
