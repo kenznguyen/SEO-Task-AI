@@ -4,9 +4,20 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 
+data class NativeGenerationResult(
+    val text: String,
+    val promptTokens: Int,
+    val generatedTokens: Int,
+    val prefillMillis: Long,
+    val decodeMillis: Long
+) {
+    val decodeTokensPerSecond: Double
+        get() = if (decodeMillis > 0) generatedTokens * 1000.0 / decodeMillis else 0.0
+}
+
 internal interface LlamaNativeApi {
     fun load(modelPath: String, contextTokens: Int, threads: Int): Long
-    fun generate(handle: Long, prompt: String, maxTokens: Int): String
+    fun generate(handle: Long, prompt: String, maxTokens: Int): NativeGenerationResult
     fun free(handle: Long)
 }
 
@@ -26,7 +37,7 @@ private object JniLlamaNativeApi : LlamaNativeApi {
 
 private object NativeLlamaBindings {
     external fun nativeLoad(modelPath: String, contextTokens: Int, threads: Int): Long
-    @JvmStatic external fun nativeGenerate(handle: Long, prompt: String, maxTokens: Int): String
+    @JvmStatic external fun nativeGenerate(handle: Long, prompt: String, maxTokens: Int): NativeGenerationResult
     @JvmStatic external fun nativeFree(handle: Long)
 }
 
@@ -41,6 +52,8 @@ class LlamaCppEngine internal constructor(
     private val threads: Int = defaultThreadCount()
 ) : AIEngine {
     @Volatile private var nativeHandle: Long = 0L
+    @Volatile var lastMetrics: NativeGenerationResult? = null
+        private set
 
     init {
         require(contextTokens in MIN_CONTEXT_TOKENS..MAX_CONTEXT_TOKENS) {
@@ -64,13 +77,15 @@ class LlamaCppEngine internal constructor(
         }
     }
 
-    override suspend fun generate(prompt: String): String = withContext(Dispatchers.IO) {
+    override suspend fun generate(prompt: String): String = generateWithMetrics(prompt).text
+
+    suspend fun generateWithMetrics(prompt: String): NativeGenerationResult = withContext(Dispatchers.IO) {
         require(prompt.isNotBlank()) { "Prompt must not be empty" }
         require(prompt.length <= MAX_PROMPT_CHARS) { "Prompt exceeds $MAX_PROMPT_CHARS characters" }
         synchronized(this@LlamaCppEngine) {
             val handle = nativeHandle
             check(handle != 0L) { "Local model is not loaded" }
-            native.generate(handle, prompt, MAX_GENERATION_TOKENS)
+            native.generate(handle, prompt, MAX_GENERATION_TOKENS).also { lastMetrics = it }
         }
     }
 
