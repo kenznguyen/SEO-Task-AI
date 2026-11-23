@@ -1,5 +1,6 @@
 package com.kenznguyen.seotaskai.ai
 
+import kotlinx.coroutines.CancellationException
 import com.kenznguyen.seotaskai.domain.TaskType
 import com.kenznguyen.seotaskai.domain.analyzer.TaskAnalyzer
 import com.kenznguyen.seotaskai.domain.analyzer.TaskPlan
@@ -17,6 +18,8 @@ class LocalTaskAnalyzer(
             require(engine.isReady) { "Local model is not ready" }
             parse(engine.generate(buildPrompt(input)))
                 ?: fallbackResult(fallback(input), "AI response was not valid")
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (error: Exception) {
             fallbackResult(fallback(input), error.message ?: "Local AI unavailable")
         }
