@@ -134,7 +134,7 @@ private fun TaskScreen(repository: TaskRepository) {
                 modelStatus = "Imported ${imported.file.name} (${imported.sizeBytes / 1_000_000} MB). Loading model…"
                 loaded.load()
                 engine = loaded
-                modelStatus = "Model ready: ${imported.file.name} · SHA-256 ${imported.sha256.take(12)}…"
+                modelStatus = "Model ready: ${imported.file.name} · Load: ${loaded.loadTimeMillis ?: 0} ms · SHA-256 ${imported.sha256.take(12)}…"
                 inferenceMetrics = null
                 aiType = null
             } catch (error: Exception) {
@@ -170,12 +170,13 @@ private fun TaskScreen(repository: TaskRepository) {
                                 busy = true
                                 modelStatus = "Loading ${selected.name}…"
                                 try {
+                                    engine?.close()
+                                    engine = null
                                     val loaded = LlamaCppEngine(selected)
                                     loaded.load()
-                                    engine?.close()
                                     engine = loaded
                                     inferenceMetrics = null
-                                    modelStatus = "Model ready: ${selected.name}"
+                                    modelStatus = "Model ready: ${selected.name} · Load: ${loaded.loadTimeMillis ?: 0} ms"
                                 } catch (error: Exception) {
                                     modelStatus = "Model load failed: ${error.message ?: "unknown error"}"
                                 } finally {
