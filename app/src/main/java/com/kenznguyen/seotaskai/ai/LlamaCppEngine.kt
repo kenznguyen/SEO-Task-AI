@@ -25,7 +25,7 @@ private object JniLlamaNativeApi : LlamaNativeApi {
 }
 
 private object NativeLlamaBindings {
-    @JvmStatic external fun nativeLoad(modelPath: String, contextTokens: Int, threads: Int): Long
+    external fun nativeLoad(modelPath: String, contextTokens: Int, threads: Int): Long
     @JvmStatic external fun nativeGenerate(handle: Long, prompt: String, maxTokens: Int): String
     @JvmStatic external fun nativeFree(handle: Long)
 }
